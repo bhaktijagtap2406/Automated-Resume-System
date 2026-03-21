@@ -1,4 +1,3 @@
-app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024
 from flask import Flask, request, jsonify
 from flask import send_from_directory
 from flask_cors import CORS

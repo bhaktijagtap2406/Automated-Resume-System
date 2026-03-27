@@ -40,9 +40,17 @@ DATA["Category"]     = DATA["Category"].fillna("")
 DATA["Years_Exp"]    = DATA["Years_Exp"].fillna(0)
 DATA["Email"]        = DATA["Email"].fillna("")
 
+# ── Use ID column directly from CSV ──────────────────────
+if "ID" not in DATA.columns:
+    raise ValueError(
+        "CSV is missing 'ID' column. "
+        "Please ensure your CSV has an 'ID' column.")
+DATA["ID"] = DATA["ID"].astype(str)
+
 print(f"Model loaded!")
 print(f"Data loaded: {len(DATA)} resumes")
 print(f"Categories : {DATA['Category'].nunique()}")
+
 
 # ── Helper: clean text ────────────────────────────────────
 def clean(text):
@@ -82,22 +90,18 @@ def predict():
         ), 400
 
     try:
-        cleaned  = clean(text)
-        pred     = MODEL.predict([cleaned])[0]
-        proba    = MODEL.predict_proba([cleaned])[0]
-        category = ENCODER.inverse_transform(
-                       [pred])[0]
-        confidence = round(
-            float(proba.max()) * 100, 1)
+        cleaned    = clean(text)
+        pred       = MODEL.predict([cleaned])[0]
+        proba      = MODEL.predict_proba([cleaned])[0]
+        category   = ENCODER.inverse_transform([pred])[0]
+        confidence = round(float(proba.max()) * 100, 1)
 
         # Top 3 predictions
         top3_idx = proba.argsort()[::-1][:3]
         top3 = [
             {
-                "category": ENCODER.inverse_transform(
-                                [i])[0],
-                "confidence": round(
-                    float(proba[i]) * 100, 1)
+                "category":   ENCODER.inverse_transform([i])[0],
+                "confidence": round(float(proba[i]) * 100, 1)
             }
             for i in top3_idx
         ]
@@ -109,8 +113,7 @@ def predict():
         })
 
     except Exception as e:
-        return jsonify(
-            {"error": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 
 # ════════════════════════════════════════════════════════
@@ -123,8 +126,7 @@ def predict():
 @app.route("/api/screen", methods=["POST"])
 def screen():
     data     = request.get_json(silent=True) or {}
-    jd       = data.get(
-        "job_description", "").strip()
+    jd       = data.get("job_description", "").strip()
     top_n    = int(data.get("top_n", 10))
     category = data.get("category_filter")
 
@@ -147,36 +149,29 @@ def screen():
 
         # Cosine similarity ranking
         clean_jd  = clean(jd)
-        all_texts = ([clean_jd] +
-                     df["NLP_Resume"].tolist())
+        all_texts = [clean_jd] + df["NLP_Resume"].tolist()
 
-        vec = TfidfVectorizer(
-            sublinear_tf = True,
-            min_df       = 1)
+        vec = TfidfVectorizer(sublinear_tf=True, min_df=1)
         mat = vec.fit_transform(all_texts)
 
-        scores     = cosine_similarity(
-            mat[0:1], mat[1:]).flatten()
-        df         = df.copy()
+        scores      = cosine_similarity(mat[0:1], mat[1:]).flatten()
+        df          = df.copy()
         df["score"] = scores
 
         top     = df.nlargest(top_n, "score")
         results = []
 
-        for rank, (_, row) in enumerate(
-                top.iterrows(), 1):
+        for rank, (_, row) in enumerate(top.iterrows(), 1):
             results.append({
-                "rank":      rank,
-                "category":  row["Category"],
-                "score":     round(
-                    float(row["score"])*100, 2),
-                "years_exp": int(
-                    row.get("Years_Exp", 0)),
-                "email":     str(
-                    row.get("Email", "")),
-                "preview":   str(
-                    row.get("Clean_Resume","")
-                )[:250]
+                "rank":         rank,
+                "id":           str(row["ID"]),      # ← exact ID from CSV
+                "category":     str(row["Category"]),
+                "score":        round(float(row["score"]) * 100, 2),
+                "years_exp":    int(row.get("Years_Exp", 0)),
+                "email":        str(row.get("Email", "")),
+                "preview":      str(row.get("Clean_Resume", ""))[:250],
+                "full_text":    str(row.get("Resume_str",
+                                    row.get("Clean_Resume", "")))
             })
 
         return jsonify({
@@ -187,8 +182,7 @@ def screen():
         })
 
     except Exception as e:
-        return jsonify(
-            {"error": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 
 # ════════════════════════════════════════════════════════
@@ -199,62 +193,43 @@ def screen():
 @app.route("/api/upload", methods=["POST"])
 def upload():
     if "file" not in request.files:
-        return jsonify(
-            {"error": "No file uploaded"}), 400
+        return jsonify({"error": "No file uploaded"}), 400
 
     f   = request.files["file"]
     ext = f.filename.rsplit(".", 1)[-1].lower()
 
     try:
-        # Extract text based on file type
         if ext == "pdf":
             import fitz
-            doc  = fitz.open(
-                stream   = f.read(),
-                filetype = "pdf")
-            text = " ".join([
-                page.get_text()
-                for page in doc])
+            doc  = fitz.open(stream=f.read(), filetype="pdf")
+            text = " ".join([page.get_text() for page in doc])
 
         elif ext == "docx":
             from docx import Document
             import io
             doc  = Document(io.BytesIO(f.read()))
-            text = " ".join([
-                para.text
-                for para in doc.paragraphs])
+            text = " ".join([para.text for para in doc.paragraphs])
 
         elif ext == "txt":
             text = f.read().decode("utf-8")
 
         else:
-            return jsonify({
-                "error": "Use PDF, DOCX or TXT"
-            }), 400
+            return jsonify({"error": "Use PDF, DOCX or TXT"}), 400
 
         if len(text.strip()) < 30:
-            return jsonify({
-                "error": "File is empty or unreadable"
-            }), 400
+            return jsonify({"error": "File is empty or unreadable"}), 400
 
-        # Predict
         cleaned    = clean(text)
         pred       = MODEL.predict([cleaned])[0]
-        proba      = MODEL.predict_proba(
-                         [cleaned])[0]
-        category   = ENCODER.inverse_transform(
-                         [pred])[0]
-        confidence = round(
-            float(proba.max()) * 100, 1)
+        proba      = MODEL.predict_proba([cleaned])[0]
+        category   = ENCODER.inverse_transform([pred])[0]
+        confidence = round(float(proba.max()) * 100, 1)
 
-        # Top 3
         top3_idx = proba.argsort()[::-1][:3]
         top3 = [
             {
-                "category": ENCODER.inverse_transform(
-                                [i])[0],
-                "confidence": round(
-                    float(proba[i])*100, 1)
+                "category":   ENCODER.inverse_transform([i])[0],
+                "confidence": round(float(proba[i]) * 100, 1)
             }
             for i in top3_idx
         ]
@@ -269,8 +244,7 @@ def upload():
         })
 
     except Exception as e:
-        return jsonify(
-            {"error": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 
 # ════════════════════════════════════════════════════════
@@ -281,10 +255,7 @@ def upload():
 def categories():
     counts = DATA["Category"].value_counts()
     return jsonify([
-        {
-            "category": str(k),
-            "count":    int(v)
-        }
+        {"category": str(k), "count": int(v)}
         for k, v in counts.items()
     ])
 
@@ -295,17 +266,14 @@ def categories():
 # ════════════════════════════════════════════════════════
 @app.route("/api/stats")
 def stats():
+    wc_mean = float(DATA["Word_Count"].mean()) \
+              if "Word_Count" in DATA.columns else 0
     return jsonify({
         "total_resumes":    len(DATA),
-        "total_categories": int(
-            DATA["Category"].nunique()),
-        "avg_word_count":   round(
-            float(DATA["Word_Count"].mean()), 1),
-        "avg_experience":   round(
-            float(DATA["Years_Exp"].mean()), 1),
-        "top_category":     str(
-            DATA["Category"].value_counts(
-            ).index[0])
+        "total_categories": int(DATA["Category"].nunique()),
+        "avg_word_count":   round(wc_mean, 1),
+        "avg_experience":   round(float(DATA["Years_Exp"].mean()), 1),
+        "top_category":     str(DATA["Category"].value_counts().index[0])
     })
 
 
@@ -315,8 +283,7 @@ def stats():
 # ════════════════════════════════════════════════════════
 @app.route("/")
 def index():
-    return send_from_directory(
-        "../frontend", "index.html")
+    return send_from_directory("../frontend", "index.html")
 
 
 # ════════════════════════════════════════════════════════
@@ -324,19 +291,15 @@ def index():
 # ════════════════════════════════════════════════════════
 @app.errorhandler(404)
 def not_found(_):
-    return jsonify(
-        {"error": "Endpoint not found"}), 404
+    return jsonify({"error": "Endpoint not found"}), 404
 
 @app.errorhandler(500)
 def server_error(e):
-    return jsonify(
-        {"error": str(e)}), 500
+    return jsonify({"error": str(e)}), 500
 
 @app.errorhandler(413)
 def too_large(_):
-    return jsonify(
-        {"error": "File too large (max 5MB)"}
-    ), 413
+    return jsonify({"error": "File too large (max 5MB)"}), 413
 
 
 # ════════════════════════════════════════════════════════

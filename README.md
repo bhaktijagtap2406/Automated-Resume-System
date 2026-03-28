@@ -63,7 +63,7 @@ The Automated Resume Screening System is a web-based application that automates 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/automated-resume-system.git
+git clone https://github.com/your-username/Automated-Resume-System-main.git
 cd Automated-Resume-System-main
 ```
 
